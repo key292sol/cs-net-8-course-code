@@ -1,0 +1,185 @@
+POINTS:
+- You cannot compare NULL = NULL
+	But you can ISNULL(Users.Active, 0) = COALESCE(@Active, Users.Active, 0)
+
+
+DROP TABLE IF EXISTS #TemporaryTableName
+
+-- But older versions of sql don't have IF EXISTS command. So, for them:
+IF OBJECT_ID('tempdb..#TemporaryTableName', 'U') IS NOT NULL     -- 'U' for checking if it is a table
+BEGIN
+	DROP TABLE #TemporaryTableName
+END
+
+
+
+
+CREATE CLUSTERED INDEX index_name ON TableName(ColumnName1, ColumnName2, ...)
+CREATE CLUSTERED INDEX cix_Posts_UserId_PostId ON TutorialAppSchema.Posts(UserId, PostId)
+
+
+***MAKE TEMPORARY TABLE
+SELECT AVG(Salary) INTO #AverageDeptSalary      -- # for local, ## for global
+FROM Users 
+	LEFT JOIN UserJobInfo ON UserJobInfo.UserId = Users.UserId
+GROUP BY UserJobInfo.Department
+
+
+
+
+CREATE OR ALTER PROCEDURE TutorialAppSchema.spUsers_Get
+    @UserId INT = NULL,
+    @Active BIT = NULL
+AS 
+BEGIN
+    SELECT [Users].[UserId], [Users].[FirstName], [Users].[LastName],
+            [Users].[Email], [Users].[Gender], [Users].[Active],
+            [UserSalary].[Salary], [UserJobInfo].[Department], [UserJobInfo].JobTitle
+    FROM TutorialAppSchema.Users AS Users
+    LEFT JOIN TutorialAppSchema.UserSalary AS UserSalary
+        ON Users.UserId = UserSalary.UserId
+    LEFT JOIN TutorialAppSchema.UserJobInfo AS UserJobInfo
+        ON Users.UserId = UserJobInfo.UserId
+    WHERE Users.UserId = ISNULL(@UserId, Users.UserId)
+        AND ISNULL(Users.Active, 0) = COALESCE(@Active, Users.Active, 0)
+END
+
+
+
+EXEC TutorialAppSchema.spUsers_Get
+
+
+
+
+
+
+CREATE OR ALTER PROCEDURE TutorialAppSchema.spUser_Upsert
+    @FirstName NVARCHAR(50),
+    @LastName NVARCHAR(50),
+    @Email NVARCHAR(50),
+    @Gender NVARCHAR(10),
+    @Active BIT,
+    @JobTitle NVARCHAR(50),
+    @Department NVARCHAR(50),
+    @Salary DECIMAL(18, 4),
+    @UserId INT  = NULL
+AS
+BEGIN
+    IF EXISTS (SELECT * FROM TutorialAppSchema.Users WHERE UserId = @UserId)
+        BEGIN
+            UPDATE TutorialAppSchema.Users
+            SET FirstName = @FirstName,
+                LastName = @LastName,
+                Email = @Email,
+                Gender = @Gender,
+                Active = @Active
+            WHERE UserId = @UserId
+
+            UPDATE TutorialAppSchema.UserSalary
+            SET Salary = @Salary
+            WHERE UserId = @UserId
+
+            UPDATE TutorialAppSchema.UserJobInfo
+            SET JobTitle = @JobTitle,
+                Department = @Department
+            WHERE UserId = @UserId
+        END
+    ELSE
+        BEGIN
+        IF NOT EXISTS (SELECT * FROM TutorialAppSchema.Users WHERE Email = @Email)
+            BEGIN
+                DECLARE @OutputUserId INT
+
+                INSERT INTO TutorialAppSchema.Users([FirstName], [LastName], [Email], [Gender], [Active])
+                VALUES (@FirstName, @LastName, @Email, @Gender, @Active)
+
+                SET @OutputUserId = @@IDENTITY
+
+                INSERT INTO TutorialAppSchema.UserSalary(UserId, Salary)
+                VALUES(@OutputUserId, @Salary)
+
+                INSERT INTO TutorialAppSchema.UserJobInfo(UserId, JobTitle, Department)
+                VALUES(@OutputUserId, @JobTitle, @Department)
+            END
+        END
+END
+
+
+
+
+
+
+CREATE OR ALTER PROCEDURE TutorialAppSchema.spPosts_Get
+    @UserId INT = NULL,
+    @PostId INT = NULL,
+    @SearchVal NVARCHAR(MAX) = NULL
+AS
+BEGIN
+    SELECT [Posts].[PostId], [Posts].[UserId], [Posts].[PostTitle], [Posts].[PostContent], [Posts].[PostCreated], [Posts].[PostUpdated]
+    FROM TutorialAppSchema.Posts AS Posts
+    WHERE [Posts].[UserId] = ISNULL(@UserId, [Posts].[UserId])
+        AND [Posts].[PostId] = ISNULL(@PostId, [Posts].[PostId])
+        AND (@SearchVal IS NULL
+            OR Posts.PostContent LIKE '%' + @SearchVal + '%'
+            OR Posts.PostTitle LIKE '%' + @SearchVal + '%')
+END
+
+
+
+CREATE OR ALTER PROCEDURE TutorialAppSchema.spPosts_Upsert
+    @UserId INT,
+    @PostTitle NVARCHAR(255),
+    @PostContent NVARCHAR(MAX),
+    @PostId INT = NULL
+AS
+BEGIN
+    IF EXISTS (SELECT * FROM TutorialAppSchema.Posts WHERE PostId = @PostId)
+        BEGIN
+            UPDATE TutorialAppSchema.Posts
+            SET PostTitle = @PostTitle,
+                PostContent = @PostContent,
+                PostUpdated = GETDATE()
+            WHERE PostId = @PostId
+        END
+    ELSE 
+        BEGIN
+            INSERT INTO TutorialAppSchema.Posts(UserId, PostTitle, PostContent, PostCreated, PostUpdated)
+            VALUES (@UserId, @PostTitle, @PostContent, GETDATE(), GETDATE())
+        END
+END
+
+
+
+CREATE OR ALTER PROCEDURE TutorialAppSchema.spPost_Delete
+    @PostId INT
+    , @UserId INT 
+AS
+BEGIN
+    DELETE FROM TutorialAppSchema.Posts 
+        WHERE PostId = @PostId
+            AND UserId = @UserId
+END
+GO
+
+
+
+
+CREATE OR ALTER PROCEDURE TutorialAppSchema.spRegistration_Upsert
+    @Email VARCHAR(50),
+    @PasswordHash VARBINARY(MAX),
+    @PasswordSalt VARBINARY(MAX)
+AS
+BEGIN
+    IF NOT EXISTS (SELECT * FROM TutorialAppSchema.Auth WHERE Email = @Email)
+        BEGIN
+            INSERT INTO TutorialAppSchema.Auth(Email, PasswordHash, PasswordSalt)
+            VALUES(@Email, @PasswordHash, @PasswordSalt)
+        END
+    ELSE
+        BEGIN
+            UPDATE TutorialAppSchema.Auth
+            SET PasswordHash = @PasswordHash,
+                PasswordSalt = @PasswordSalt
+            WHERE Email = @Email
+        END
+END
